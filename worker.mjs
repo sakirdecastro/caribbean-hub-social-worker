@@ -38,7 +38,12 @@ export function createWorker({supabaseUrl,anonKey,workerToken,fetchImpl=fetch}){
  let running,lastPoll=0;
  async function rpc(name,args){
   const response=await fetchImpl(new URL('/rest/v1/rpc/'+name,base),{method:'POST',headers:{apikey:anonKey,...(anonKey.split('.').length===3?{Authorization:'Bearer '+anonKey}:{}),'Content-Type':'application/json'},body:JSON.stringify({p_worker_token:workerToken,...args}),signal:AbortSignal.timeout(20000)});
-  if(!response.ok)throw Error('backend_'+response.status);
+  if (!response.ok) {
+    const failure = await response.json().catch(() => null);
+    const code = typeof failure?.code === 'string' && /^(?:PGRST\d{3}|[0-9A-Z]{5})$/.test(failure.code) ? failure.code : 'unknown';
+    console.error('Backend rejected ' + name + ' with HTTP ' + response.status + ' (' + code + ')');
+    throw Error('backend_' + response.status);
+  }
   return response.json();
  }
  async function drain(){
