@@ -58,7 +58,7 @@ export function createWorker({supabaseUrl,anonKey,workerToken,fetchImpl=fetch}){
    await rpc('image_worker_complete',{p_job_id:job.id,p_lease:job.lease,p_publisher_url:target});
   }
  }
- return {poll(){if(!running&&Date.now()-lastPoll<3000)return Promise.resolve();if(!running){lastPoll=Date.now();running=drain().catch(()=>{console.error('Social import attempt failed; a leased job can retry.');}).finally(()=>{running=undefined;});}return running;}};
+ return {poll(){if(!running&&Date.now()-lastPoll<3000)return Promise.resolve();if(!running){lastPoll=Date.now();running=drain().catch(error=>{const code=/^backend_[0-9]{3}$/.test(error?.message)?error.message:'transport';console.error('Social import attempt failed ('+code+'); a leased job can retry.');}).finally(()=>{running=undefined;});}return running;}};
 }
 export function serve(worker,{port=Number(process.env.PORT||10000)}={}){
  const server=createServer((req,res)=>{
