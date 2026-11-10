@@ -14,6 +14,24 @@ export function metaRequest(job){
  if(typeof job.access_token!=='string'||job.access_token.length<16||/[\r\n]/.test(job.access_token))throw Error('invalid_credential');
  return {url:url.href,headers:{Authorization:'Bearer '+job.access_token,Accept:'application/json'}};
 }
+
+// Google RSS does not include article images. Resolve only its fixed public
+// endpoint here; publisher metadata remains with the existing bounded collector.
+export async function resolveGoogleArticle(value,fetchImpl=fetch){
+ const url=new URL(value);if(url.origin!=='https://news.google.com'||!/^\/rss\/articles\/[A-Za-z0-9_-]+$/.test(url.pathname))throw Error('invalid_google_article');
+ const id=url.pathname.split('/').pop();
+ const page=await fetchImpl(url.href,{redirect:'error',signal:AbortSignal.timeout(15000)});
+ if(!page.ok)throw Error('google_unavailable');const html=await page.text();if(html.length>2000000)throw Error('oversize');
+ const signature=html.match(/data-n-a-sg="([^"<>]+)"/)?.[1],timestamp=html.match(/data-n-a-ts="([0-9]+)"/)?.[1];
+ if(!signature||!timestamp)throw Error('google_resolution_unavailable');
+ const args=['garturlreq',[['X','X',['X','X'],null,null,1,1,'US:en',null,1,null,null,null,null,null,0,1],'X','X',1,[1,1,1],1,1,null,0,0,null,0],id,Number(timestamp),signature];
+ const response=await fetchImpl('https://news.google.com/_/DotsSplashUi/data/batchexecute',{method:'POST',redirect:'error',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({'f.req':JSON.stringify([[['Fbv4je',JSON.stringify(args)]]])}),signal:AbortSignal.timeout(15000)});
+ if(!response.ok)throw Error('google_resolution_unavailable');const text=await response.text();if(text.length>2000000)throw Error('oversize');
+ for(const line of text.split('\n')){let rows;try{rows=JSON.parse(line);}catch{continue;}if(!Array.isArray(rows))continue;
+  for(const row of rows){if(row?.[0]!=='wrb.fr'||row?.[1]!=='Fbv4je'||typeof row[2]!=='string')continue;const result=JSON.parse(row[2]);if(result?.[0]!=='garturlres')continue;const target=new URL(result[1]);if(target.protocol!=='https:'||target.username||target.password||target.port||target.hostname==='news.google.com')throw Error('invalid_publisher');return target.href;}
+ }throw Error('google_resolution_unavailable');
+}
+
 export function createWorker({supabaseUrl,anonKey,workerToken,fetchImpl=fetch}){
  const base=new URL(supabaseUrl);if(base.protocol!=='https:')throw Error('HTTPS required');
  let running,lastPoll=0;
@@ -25,13 +43,18 @@ export function createWorker({supabaseUrl,anonKey,workerToken,fetchImpl=fetch}){
  async function drain(){
   // Credentials are returned only over HTTPS to this authenticated worker.
   for(let batch=0;batch<10;batch++){
-   const jobs=await rpc('social_worker_claim',{});if(!Array.isArray(jobs)||jobs.length===0)return;
+   const jobs=await rpc('social_worker_claim',{});if(!Array.isArray(jobs)||jobs.length===0)break;
    for(const job of jobs){
     let status=599,body={};
     try{const request=metaRequest(job);const result=await fetchImpl(request.url,{headers:request.headers,redirect:'error',signal:AbortSignal.timeout(15000)});status=result.status;const text=await result.text();if(Buffer.byteLength(text)>2000000)throw Error('oversize');body=JSON.parse(text);}catch{status=599;body={};}
     // Never log credentials, Meta responses, URLs or request bodies.
     await rpc('social_worker_complete',{p_request_id:job.request_id,p_lease:job.lease,p_status:status,p_body:body});
    }
+  }
+  const images=await rpc('image_worker_claim',{});
+  for(const job of (Array.isArray(images)?images:[])){
+   let target=null;try{target=await resolveGoogleArticle(job.google_url,fetchImpl);}catch{/* Keep posts readable if upstream resolution fails. */}
+   await rpc('image_worker_complete',{p_job_id:job.id,p_lease:job.lease,p_publisher_url:target});
   }
  }
  return {poll(){if(!running&&Date.now()-lastPoll<3000)return Promise.resolve();if(!running){lastPoll=Date.now();running=drain().catch(()=>{console.error('Social import attempt failed; a leased job can retry.');}).finally(()=>{running=undefined;});}return running;}};

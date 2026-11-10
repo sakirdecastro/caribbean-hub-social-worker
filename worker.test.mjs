@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
-import {metaRequest,createWorker} from './worker.mjs';
+import {metaRequest,createWorker,resolveGoogleArticle} from './worker.mjs';
 const credential='fixture-meta-token-never-real';
 test('Meta requests restrict hosts/accounts and keep credentials out of URLs',()=>{
  const request=metaRequest({platform:'instagram',account:'government',reader_id:'17841400000000000',access_token:credential});const url=new URL(request.url);assert.equal(url.hostname,'graph.facebook.com');assert.match(url.searchParams.get('fields'),/business_discovery/);assert.ok(!request.url.includes(credential));assert.equal(request.headers.Authorization,'Bearer '+credential);
@@ -22,6 +22,17 @@ test('Meta failures produce a generic failed job rather than leaking response/to
  const worker=createWorker({supabaseUrl:'https://fixture.supabase.co',anonKey:'public',workerToken:'worker',fetchImpl:async(url,options)=>{
   if(String(url).includes('social_worker_claim')){if(!first)return Response.json([]);first=false;return Response.json([{request_id:-2,lease:'nonce',platform:'facebook',account:'1234567890',access_token:credential}]);}
   if(String(url).includes('graph.facebook.com'))throw Error('sensitive failure '+credential);
+  if(String(url).includes('image_worker_claim'))return Response.json([]);
   completion=JSON.parse(options.body);return Response.json(true);
  }});await worker.poll();assert.equal(completion.p_status,599);assert.deepEqual(completion.p_body,{});assert.ok(!JSON.stringify(completion).includes(credential));
+});
+
+test('Google resolution stays on fixed endpoints and returns the publisher, never the generic image',async()=>{
+ const calls=[];const resolved=await resolveGoogleArticle('https://news.google.com/rss/articles/ABC_123?oc=5',async(url,options)=>{calls.push({url:String(url),options});return calls.length===1?new Response('<div data-n-a-ts="1234" data-n-a-sg="public-signature"></div><meta property="og:image" content="google-logo">'):new Response(JSON.stringify([['wrb.fr','Fbv4je',JSON.stringify(['garturlres','https://publisher.example/story',1])]]));});
+ assert.equal(resolved,'https://publisher.example/story');assert.equal(calls.length,2);assert.ok(calls.every(c=>new URL(c.url).hostname==='news.google.com'));assert.equal(calls[1].options.method,'POST');assert.equal(calls[1].options.redirect,'error');
+});
+test('Google resolution rejects arbitrary targets, consent pages and insecure publisher results',async()=>{
+ await assert.rejects(()=>resolveGoogleArticle('https://localhost/private',()=>{throw Error('must not fetch');}));
+ await assert.rejects(()=>resolveGoogleArticle('https://news.google.com/rss/articles/ABC',async()=>new Response('Consent required')));
+ let n=0;await assert.rejects(()=>resolveGoogleArticle('https://news.google.com/rss/articles/ABC',async()=>new Response(++n===1?'<div data-n-a-ts="123" data-n-a-sg="signature">':JSON.stringify([['wrb.fr','Fbv4je',JSON.stringify(['garturlres','http://publisher.example/story'])]]))));
 });
