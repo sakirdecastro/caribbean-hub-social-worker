@@ -29,7 +29,7 @@ test('Meta failures produce a generic failed job rather than leaking response/to
 
 test('Google resolution stays on fixed endpoints and returns the publisher, never the generic image',async()=>{
  const calls=[];const resolved=await resolveGoogleArticle('https://news.google.com/rss/articles/ABC_123?oc=5',async(url,options)=>{calls.push({url:String(url),options});return calls.length===1?new Response('<div data-n-a-ts="1234" data-n-a-sg="public-signature"></div><meta property="og:image" content="google-logo">'):new Response(JSON.stringify([['wrb.fr','Fbv4je',JSON.stringify(['garturlres','https://publisher.example/story',1])]]));});
- assert.equal(resolved,'https://publisher.example/story');assert.equal(calls.length,2);assert.ok(calls.every(c=>new URL(c.url).hostname==='news.google.com'));assert.equal(calls[1].options.method,'POST');assert.equal(calls[1].options.redirect,'error');
+ assert.equal(resolved,'https://publisher.example/story');assert.equal(calls.length,2);assert.equal(new URL(calls[0].url).searchParams.get('hl'),'en-US');assert.equal(new URL(calls[0].url).searchParams.get('ceid'),'US:en');assert.ok(calls.every(c=>new URL(c.url).hostname==='news.google.com'));assert.equal(calls[1].options.method,'POST');assert.equal(calls[1].options.redirect,'error');
 });
 test('Google resolution rejects arbitrary targets, consent pages and insecure publisher results',async()=>{
  await assert.rejects(()=>resolveGoogleArticle('https://localhost/private',()=>{throw Error('must not fetch');}));

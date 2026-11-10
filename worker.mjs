@@ -20,6 +20,7 @@ export function metaRequest(job){
 export async function resolveGoogleArticle(value,fetchImpl=fetch){
  const url=new URL(value);if(url.origin!=='https://news.google.com'||!/^\/rss\/articles\/[A-Za-z0-9_-]+$/.test(url.pathname))throw Error('invalid_google_article');
  const id=url.pathname.split('/').pop();
+ url.searchParams.set('hl','en-US');url.searchParams.set('gl','US');url.searchParams.set('ceid','US:en');
  const page=await fetchImpl(url.href,{redirect:'error',signal:AbortSignal.timeout(15000)});
  if(!page.ok)throw Error('google_unavailable');const html=await page.text();if(html.length>2000000)throw Error('oversize');
  const signature=html.match(/data-n-a-sg="([^"<>]+)"/)?.[1],timestamp=html.match(/data-n-a-ts="([0-9]+)"/)?.[1];
